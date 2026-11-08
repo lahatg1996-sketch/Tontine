@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tontine</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0f7b4f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tontine">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+
+<style>
+:root{--vert:#0f7b4f;--vert-clair:#e6f4ec;--rouge:#c0392b;--gris:#666;--bord:#ddd;--fond:#f6f7f6}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,sans-serif;background:var(--fond);color:#111}
+header{background:var(--vert);color:#fff;padding:calc(14px + env(safe-area-inset-top)) 16px 14px;font-weight:700;font-size:18px;display:flex;align-items:center;gap:10px;position:sticky;top:0}
+header button{background:none;border:0;color:#fff;font-size:20px;padding:0}
+main{padding:14px;max-width:560px;margin:auto}
+.card{background:#fff;border:1px solid var(--bord);border-radius:12px;padding:14px;margin-bottom:12px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+h3{margin:0 0 6px}
+.muted{color:var(--gris);font-size:14px}
+button.btn{background:var(--vert);color:#fff;border:0;border-radius:10px;padding:12px 14px;font-size:16px;width:100%;margin-top:8px}
+button.sec{background:#fff;color:var(--vert);border:1px solid var(--vert)}
+button.danger{background:#fff;color:var(--rouge);border:1px solid var(--rouge)}
+button.small{width:auto;margin:0;padding:8px 12px;font-size:14px}
+input,select,textarea{width:100%;padding:11px;border:1px solid var(--bord);border-radius:10px;font-size:16px;margin:4px 0 10px;font-family:inherit}
+label{font-size:14px;color:var(--gris)}
+.ok{background:var(--vert-clair)}
+.badge{font-size:13px;padding:3px 8px;border-radius:20px;background:var(--vert-clair);color:var(--vert)}
+.badge.non{background:#fdecea;color:var(--rouge)}
+a.wa{color:#fff;background:#25d366;text-decoration:none;border-radius:10px;padding:8px 12px;font-size:14px}
+.bar{height:8px;background:#eee;border-radius:8px;overflow:hidden;margin-top:8px}
+.bar i{display:block;height:100%;background:var(--vert)}
+button.btn.wabtn{background:#25d366;color:#fff;border:0}
+.col{display:flex;flex-direction:column;gap:6px;align-items:stretch}
+a.btn{display:block;background:var(--vert);color:#fff;border-radius:10px;padding:12px 14px;font-size:16px;text-align:center;text-decoration:none;margin-top:8px}
+a.btn.small{display:inline-block;margin:0;padding:8px 12px;font-size:14px}
+a.btn.wabtn{background:#25d366;color:#fff}
+textarea.code{font-size:13px;font-family:ui-monospace,Menlo,monospace}
+</style>
+</head>
+<body>
+<header id="hd"></header>
+<main id="app"></main>
+
+<script>
+/* ====== DONNÉES ======
+S = { tontines: [ {
+  id, nom, montant, frequence ('hebdo'|'quinzaine'|'mensuelle'), debut (YYYY-MM-DD),
+  tour (numéro du tour actuel, commence à 0),
+  membres: [ {id, nom, tel} ]  // l'ordre = l'ordre des bénéficiaires
+  paiements: { "tour_membreId": {mode, date} },
+  historique: [ {tour, beneficiaire, total, date} ]
+} ] }
+*/
+const KEY = 'tontines_v1';
+let S = load();
+let view = { name: 'home' };
+
+function load(){ try { return JSON.parse(localStorage.getItem(KEY)) || {tontines:[]}; } catch(e){ return {tontines:[]}; } }
+function save(){ try { localStorage.setItem(KEY, JSON.stringify(S)); } catch(e){} }
+const uid = () => Math.random().toString(36).slice(2,9);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fcfa = n => Number(n).toLocaleString('fr-FR') + ' FCFA';
+const T = id => S.tontines.find(t => t.id === id);
+
+function dateTour(t, n){
+  const d = new Date(t.debut + 'T12:00:00');
+  if (t.frequence === 'hebdo') d.setDate(d.getDate() + 7*n);
+  else if (t.frequence === 'quinzaine') d.setDate(d.getDate() + 15*n);
+  else d.setMonth(d.getMonth() + n);
+  return d.toLocaleDateString('fr-FR', {day:'numeric', month:'long', year:'numeric'});
+}
+const recu = (t, m) => t.historique.some(h => h.bid ? h.bid === m.id : h.beneficiaire === m.nom);
+const benef = t => { const id = t.benefs && t.benefs[t.tour]; return t.membres.find(m => m.id === id) || t.membres.find(m => !recu(t, m)) || t.membres[t.tour % t.membres.length]; };
+const msgRelance = (t, m) => `Bonjour ${m.nom}, petit rappel pour la tontine "${t.nom}" : la cotisation de ${fcfa(t.montant)} du tour ${t.tour+1} n'est pas encore reçue. Le bénéficiaire de ce tour est ${benef(t).nom}. Merci de régler dès que possible.`;
+const waApp = (num, txt) => 'whatsapp://send?' + (num ? 'phone=' + num + '&' : '') + 'text=' + encodeURIComponent(txt);
+const waWeb = (num, txt) => 'https://wa.me/' + (num || '') + '?text=' + encodeURIComponent(txt);
+const recapTexte = t => {
+  const b = benef(t), p = nbPayes(t), n = t.membres.length;
+  const lignes = t.membres.map(m => (paye(t, m) ? '✅ ' : '❌ ') + m.nom).join('\n');
+  return `*${t.nom}* — Tour ${t.tour+1} (${dateTour(t, t.tour)})\nCotisation : ${fcfa(t.montant)} par membre\nBénéficiaire : ${b.nom}\n\n${lignes}\n\nCollecté : ${fcfa(p*t.montant)} sur ${fcfa(n*t.montant)}`;
+};
+const codeTontine = t => 'TONTINE1:' + btoa(unescape(encodeURIComponent(JSON.stringify(t))));
+const paye = (t, m) => t.paiements[t.tour + '_' + m.id];
+const nbPayes = t => t.membres.filter(m => paye(t, m)).length;
+
+function go(name, id){ view = {name, id}; render(); window.scrollTo(0,0); }
+
+function phone(tel){
+  const d = String(tel||'').replace(/\D/g,'');
+  return d.length === 9 ? '221' + d : d;
+}
+
+/* ====== ÉCRANS ====== */
+function render(){
+  const hd = document.getElementById('hd'), app = document.getElementById('app');
+  const back = (to, id) => `<button onclick="go('${to}'${id?`,'${id}'`:''})">←</button>`;
+  if (view.name === 'home') {
+    hd.innerHTML = 'Mes tontines';
+    app.innerHTML = (S.tontines.map(t => {
+      const p = nbPayes(t), n = t.membres.length;
+      return `<div class="card" onclick="go('detail','${t.id}')">
+        <div class="row"><h3>${esc(t.nom)}</h3><span class="badge">Tour ${t.tour+1}</span></div>
+        <div class="muted">${fcfa(t.montant)} / membre · ${n} membres</div>
+        <div class="muted">Bénéficiaire : <b>${esc(benef(t).nom)}</b></div>
+        <div class="bar"><i style="width:${n?p/n*100:0}%"></i></div>
+        <div class="muted">${p}/${n} ont payé · ${fcfa(p*t.montant)} collectés</div>
+      </div>`;
+    }).join('') || '<p class="muted">Aucune tontine pour l\'instant.</p>')
+      + `<button class="btn" onclick="go('new')">+ Nouvelle tontine</button>
+      <button class="btn sec" onclick="go('import')">Importer une tontine (code reçu)</button>`;
+  }
+  else if (view.name === 'new') {
+    hd.innerHTML = back('home') + ' Nouvelle tontine';
+    const today = new Date().toISOString().slice(0,10);
+    app.innerHTML = `<div class="card">
+      <label>Nom</label><input id="nom" placeholder="Ex : Tontine du marché">
+      <label>Montant par membre (FCFA)</label><input id="montant" type="number" inputmode="numeric" placeholder="10000">
+      <label>Fréquence</label>
+      <select id="freq"><option value="hebdo">Chaque semaine</option><option value="quinzaine">Tous les 15 jours</option><option value="mensuelle">Chaque mois</option></select>
+      <label>Date du premier tour</label><input id="debut" type="date" value="${today}">
+      <label>Membres (un par ligne : Nom, téléphone) — l'ordre = l'ordre des tours</label>
+      <textarea id="membres" rows="7" placeholder="Awa Diop, 77 123 45 67&#10;Fatou Ndiaye, 78 234 56 78"></textarea>
+      <button class="btn" onclick="creer()">Créer la tontine</button></div>`;
+  }
+  else if (view.name === 'detail') {
+    const t = T(view.id); if (!t) return go('home');
+    hd.innerHTML = back('home') + ' ' + esc(t.nom);
+    const b = benef(t), p = nbPayes(t), n = t.membres.length;
+    app.innerHTML = `
+      <div class="card ok">
+        <div class="muted">Tour ${t.tour+1} · ${dateTour(t, t.tour)}</div>
+        <h3>Bénéficiaire : ${esc(b.nom)}</h3>
+        <div>${fcfa(p*t.montant)} collectés sur ${fcfa(n*t.montant)}</div>
+        <div class="bar"><i style="width:${p/n*100}%"></i></div>
+      </div>
+      <label>Qui reçoit l'argent ce tour ?</label>
+      <select onchange="setBenef('${t.id}', this.value)">${t.membres.map(m => `<option value="${m.id}" ${m.id===b.id?'selected':''}>${esc(m.nom)}${recu(t,m)?' (a déjà reçu)':''}</option>`).join('')}</select>
+      <label>Mode de paiement (pour les prochains marquages)</label>
+      <select id="mode"><option>Espèces</option><option>Wave</option><option>Orange Money</option></select>
+      ${t.membres.map(m => { const x = paye(t, m); return `
+        <div class="card row">
+          <div><b>${esc(m.nom)}</b>${m.id===b.id?' ⭐':''}<div class="muted">${x ? esc(x.mode) + ' · ' + esc(x.date) : 'Pas encore payé'}</div></div>
+          <div class="col"><button class="btn small ${x?'sec':''}" onclick="toggle('${t.id}','${m.id}')">${x?'✓ Payé':'Marquer payé'}</button>${!x && m.tel ? `<a class="btn small wabtn" href="${waApp(phone(m.tel), msgRelance(t, m))}">Relancer</a>` : ''}</div>
+        </div>`; }).join('')}
+      <button class="btn sec" onclick="go('retards','${t.id}')">Retards & relances WhatsApp</button>
+      <button class="btn sec" onclick="go('histo','${t.id}')">Historique</button>
+      <button class="btn sec" onclick="go('partage','${t.id}')">Envoyer / sauvegarder la tontine</button>
+      <button class="btn" onclick="suivant('${t.id}')">Clôturer le tour → tour suivant</button>
+      <button class="btn danger" onclick="suppr('${t.id}')">Supprimer la tontine</button>`;
+  }
+  else if (view.name === 'retards') {
+    const t = T(view.id);
+    hd.innerHTML = back('detail', t.id) + ' Retards';
+    const r = t.membres.filter(m => !paye(t, m));
+    app.innerHTML = '<p class="muted">Touche « Relancer » : WhatsApp s\'ouvre avec le message prêt, il reste à appuyer sur Envoyer.</p>' + (r.length ? r.map(m => {
+      const msg = msgRelance(t, m), num = phone(m.tel);
+      return `<div class="card"><div class="row"><div><b>${esc(m.nom)}</b><div class="muted">${esc(m.tel||'pas de numéro')}</div></div>
+        ${m.tel ? `<a class="btn small wabtn" href="${waApp(num, msg)}">Relancer</a>` : ''}</div>
+        ${m.tel ? `<div class="muted" style="margin-top:10px">Ça ne s'ouvre pas ? <a href="${waWeb(num, msg)}" target="_blank" rel="noopener">Lien WhatsApp web</a> · <a href="#" onclick="copierRelance('${t.id}','${m.id}');return false">Copier le message</a></div>` : ''}</div>`;
+    }).join('') : '<div class="card ok">Tout le monde a payé 🎉</div>');
+  }
+  else if (view.name === 'histo') {
+    const t = T(view.id);
+    hd.innerHTML = back('detail', t.id) + ' Historique';
+    app.innerHTML = t.historique.length ? t.historique.slice().reverse().map(h =>
+      `<div class="card"><b>Tour ${h.tour+1}</b> · ${esc(h.beneficiaire)}<div class="muted">${fcfa(h.total)} · clôturé le ${esc(h.date)}</div></div>`).join('')
+      : '<p class="muted">Aucun tour clôturé.</p>';
+  }
+  else if (view.name === 'partage') {
+    const t = T(view.id);
+    hd.innerHTML = back('detail', t.id) + ' Envoyer / sauvegarder';
+    const rec = recapTexte(t), code = codeTontine(t);
+    app.innerHTML = `
+      <div class="card">
+        <h3>1. Récapitulatif du tour</h3>
+        <div class="muted">Qui a payé, qui reçoit, le total. À envoyer au groupe.</div>
+        <textarea id="rec" rows="8" readonly>${esc(rec)}</textarea>
+        <button class="btn" onclick="partager('rec')">Partager (WhatsApp, etc.)</button>
+        <a class="btn wabtn" href="${waApp('', rec)}">Ouvrir WhatsApp directement</a>
+        <button class="btn sec" onclick="copierTexte(document.getElementById('rec').value)">Copier</button>
+      </div>
+      <div class="card">
+        <h3>2. Sauvegarde complète de la tontine</h3>
+        <div class="muted">Ce code contient toute la tontine (membres, paiements, historique). Envoie-le-toi : pour la restaurer, colle-le dans « Importer une tontine ».</div>
+        <textarea id="cod" class="code" rows="4" readonly>${esc(code)}</textarea>
+        <button class="btn" onclick="partager('cod')">Partager (WhatsApp, etc.)</button>
+        <button class="btn sec" onclick="copierTexte(document.getElementById('cod').value)">Copier le code</button>
+      </div>`;
+  }
+  else if (view.name === 'import') {
+    hd.innerHTML = back('home') + ' Importer une tontine';
+    app.innerHTML = `<div class="card">
+      <label>Colle ici le code reçu (il commence par TONTINE1:)</label>
+      <textarea id="cod" class="code" rows="6" placeholder="TONTINE1:..."></textarea>
+      <button class="btn" onclick="importer()">Importer</button></div>`;
+  }
+}
+
+/* ====== CONFIRMATION & MESSAGES (dans l'app) ====== */
+function demander(msg, oui){
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:99';
+  d.innerHTML = `<div class="card" style="max-width:420px;width:100%;margin:0"><p style="margin-top:0">${esc(msg)}</p><button class="btn" id="dOui">Oui</button><button class="btn sec" id="dNon">Annuler</button></div>`;
+  document.body.appendChild(d);
+  d.querySelector('#dOui').onclick = () => { d.remove(); oui(); };
+  d.querySelector('#dNon').onclick = () => d.remove();
+}
+function info(msg){
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;left:16px;right:16px;bottom:calc(20px + env(safe-area-inset-bottom));background:#222;color:#fff;padding:14px;border-radius:12px;text-align:center;z-index:99';
+  d.textContent = msg;
+  document.body.appendChild(d);
+  setTimeout(() => d.remove(), 3500);
+}
+
+/* ====== ACTIONS ====== */
+function creer(){
+  const nom = document.getElementById('nom').value.trim();
+  const montant = Number(document.getElementById('montant').value);
+  const lignes = document.getElementById('membres').value.split('\n').map(l => l.trim()).filter(Boolean);
+  if (!nom || !montant || lignes.length < 2) return info('Remplis le nom, le montant et au moins 2 membres.');
+  S.tontines.push({
+    id: uid(), nom, montant,
+    frequence: document.getElementById('freq').value,
+    debut: document.getElementById('debut').value,
+    tour: 0, paiements: {}, historique: [],
+    membres: lignes.map(l => { const [n, ...r] = l.split(','); return {id: uid(), nom: n.trim(), tel: r.join(',').trim()}; })
+  });
+  save(); go('home');
+}
+function toggle(tid, mid){
+  const t = T(tid), k = t.tour + '_' + mid;
+  if (t.paiements[k]) delete t.paiements[k];
+  else t.paiements[k] = {mode: document.getElementById('mode').value, date: new Date().toLocaleDateString('fr-FR')};
+  save(); render();
+}
+function suivant(tid){
+  const t = T(tid), p = nbPayes(t), n = t.membres.length;
+  const msg = p < n ? `Attention : ${n-p} membre(s) n'ont pas payé. Clôturer quand même ?` : 'Clôturer ce tour ?';
+  demander(msg, () => {
+    t.historique.push({tour: t.tour, beneficiaire: benef(t).nom, bid: benef(t).id, total: p*t.montant, date: new Date().toLocaleDateString('fr-FR')});
+    t.tour++; save(); render(); window.scrollTo(0, 0);
+    info('Tour clôturé ✅ Tour ' + (t.tour + 1) + ' commencé');
+  });
+}
+function suppr(tid){
+  demander('Supprimer cette tontine et tout son historique ?', () => {
+    S.tontines = S.tontines.filter(t => t.id !== tid); save(); go('home');
+  });
+}
+/* ====== BÉNÉFICIAIRE, COPIE, PARTAGE, IMPORT ====== */
+function setBenef(tid, mid){
+  const t = T(tid); t.benefs = t.benefs || {}; t.benefs[t.tour] = mid; save(); render();
+}
+async function copierTexte(txt){
+  try { await navigator.clipboard.writeText(txt); info('Copié ✅ Colle-le maintenant dans WhatsApp.'); return; } catch(e) {}
+  const ta = document.createElement('textarea');
+  ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.focus(); ta.select(); ta.setSelectionRange(0, 999999);
+  let ok = false; try { ok = document.execCommand('copy'); } catch(e) {}
+  ta.remove();
+  info(ok ? 'Copié ✅ Colle-le maintenant dans WhatsApp.' : 'Copie impossible : sélectionne le texte à la main.');
+}
+function copierRelance(tid, mid){
+  const t = T(tid), m = t.membres.find(x => x.id === mid);
+  copierTexte(msgRelance(t, m));
+}
+function partager(id){
+  const txt = document.getElementById(id).value;
+  if (navigator.share) navigator.share({text: txt}).catch(() => {});
+  else copierTexte(txt);
+}
+function importer(){
+  try {
+    let s = document.getElementById('cod').value.trim();
+    const i = s.indexOf('TONTINE1:'); if (i < 0) throw new Error('format');
+    s = s.slice(i + 9).replace(/\s+/g, '');
+    const t = JSON.parse(decodeURIComponent(escape(atob(s))));
+    const okId = x => typeof x === 'string' && /^\w+$/.test(x);
+    if (!t || !okId(t.id) || !t.nom || !Number(t.montant) || !Array.isArray(t.membres) || t.membres.length < 2 || !t.membres.every(m => m && okId(m.id) && m.nom)) throw new Error('format');
+    t.nom = String(t.nom); t.montant = Number(t.montant);
+    t.tour = Number(t.tour) || 0;
+    if (!['hebdo','quinzaine','mensuelle'].includes(t.frequence)) t.frequence = 'mensuelle';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(t.debut || '')) t.debut = new Date().toISOString().slice(0,10);
+    t.membres = t.membres.map(m => ({id: m.id, nom: String(m.nom), tel: String(m.tel || '')}));
+    const pa = {}; Object.entries(t.paiements || {}).forEach(([k, v]) => { pa[k] = {mode: String((v && v.mode) || ''), date: String((v && v.date) || '')}; });
+    t.paiements = pa;
+    t.historique = (Array.isArray(t.historique) ? t.historique : []).map(x => ({tour: Number(x.tour) || 0, beneficiaire: String(x.beneficiaire || ''), bid: x.bid ? String(x.bid) : '', total: Number(x.total) || 0, date: String(x.date || '')}));
+    t.benefs = (t.benefs && typeof t.benefs === 'object') ? t.benefs : {};
+    const k = S.tontines.findIndex(x => x.id === t.id);
+    const fin = () => { save(); go('home'); info('Tontine importée ✅'); };
+    if (k >= 0) demander('Cette tontine existe déjà. La remplacer ?', () => { S.tontines[k] = t; fin(); });
+    else { S.tontines.push(t); fin(); }
+  } catch(e) { info('Code invalide. Vérifie que tout le code est bien collé.'); }
+}
+render();
+if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
+</script>
+</body>
+</html>
